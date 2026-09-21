@@ -419,3 +419,10 @@ A revision loop could continue indefinitely.
 
 
 
+## 19. **Reflection**
+Building this Personal Finance Assistant helped us clearly understand how multiple specialized AI agents work together as a single system. Instead of using one agent for every task, we devided the work among five agents, i.e, Transaction Categorizer, Budget Analyst, Spending Pattern Detector, Savings Analyzer, and Risk and Compliance Critic. The langGraph supervisor coordinates these agents and uses a shared state to pass information between them. We also learned the importance of using Python-based tools for calculations rather than relying on the LLM to perform important financial arithmetic.
+
+One of the main challenges we encountered was making sure that the different agents do not produce inconsistent financial information. This was addressed by calculating the authoritative income, expenses, and the remaining balance using Python before the agents run. The critic agent then checks the analysis for numerical inconsistencies, unsupported claims, and overly certain recommendations. We also added human approval beefore the savings scenarios are accepted, which demonstrates how human oversight can be incorporated into an AI workflow.
+
+The project showed us that a multi-agent system requires more than simply creating several AI agents, but instead agents with clearly defined responsibilities, an orchestrator, shared state, tools, validation, and termination conditions. The project also improved our understanding of LangGraph, Python project structure, Git, GitHub, and how to document and demonstrate an AI system using a notebook and screenshots.
+
