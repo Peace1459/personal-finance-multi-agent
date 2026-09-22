@@ -11,9 +11,21 @@ from src.agents.critic import critic_agent
 
 def human_approval_node(state):
     """
-    Ask the human user to approve the proposed savings scenarios.
+    Handle human approval.
+
+    Streamlit handles approval in the browser.
+    The terminal version uses input().
     """
 
+    # Streamlit/web interface:
+    # stop here and let the browser display the approval buttons.
+    if state.get("interface") == "web":
+        return {
+            "human_approved": None,
+            "human_feedback": "",
+        }
+
+    # Terminal interface:
     print("\n==============================")
     print("HUMAN APPROVAL REQUIRED")
     print("==============================")
@@ -32,7 +44,7 @@ def human_approval_node(state):
 
         return {
             "human_approved": True,
-            "human_feedback": "User approved the savings scenarios."
+            "human_feedback": "User approved the savings scenarios.",
         }
 
     print("\nHuman rejection received.")
@@ -43,9 +55,9 @@ def human_approval_node(state):
 
     return {
         "human_approved": False,
-        "human_feedback": feedback
+        "human_feedback": feedback,
     }
-
+    
 
 def supervisor_router(state):
     """
@@ -86,6 +98,10 @@ def supervisor_router(state):
 
     # Require human approval before the critic.
     if state.get("human_approved") is None:
+
+        if state.get("interface") == "web":
+            return "end"
+
         return "human_approval"
 
     # Once human approval is received, send the analysis

@@ -5,3 +5,4 @@ python-dotenv
 pandas
 matplotlib
 jupyter
+streamlit
