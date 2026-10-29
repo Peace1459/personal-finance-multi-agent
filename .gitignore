@@ -1,5 +1,15 @@
+
 .venv/
 .env
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# Local database files
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Local test CSV files
+data/test_*.csv
+data/cross_import_test_*.csv
