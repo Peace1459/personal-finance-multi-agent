@@ -1,6 +1,8 @@
-import streamlit as st
-import pandas as pd
+import os
 
+import pandas as pd
+import requests
+import streamlit as st
 from src.tools.calculator import (
     calculate_income,
     calculate_expenses,
@@ -19,7 +21,49 @@ st.set_page_config(
     page_icon="💰",
     layout="wide",
 )
+# ============================================================
+# API CONFIGURATION
+# ============================================================
 
+API_BASE_URL = os.getenv(
+    "FINANCE_API_URL",
+    "http://127.0.0.1:8000",
+)
+
+API_TIMEOUT_SECONDS = 15
+# ============================================================
+# CROSS-IMPORT DUPLICATE REVIEW API HELPERS
+# ============================================================
+
+def fetch_cross_import_duplicates(status="pending"):
+    """Fetch cross-import duplicate candidates from the API."""
+
+    response = requests.get(
+        f"{API_BASE_URL}/cross-import-duplicates",
+        params={"status": status} if status != "all" else {},
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+def update_cross_import_duplicate(duplicate_id, status):
+    """Confirm or dismiss a duplicate candidate."""
+
+    if status not in {"confirmed", "dismissed"}:
+        raise ValueError(
+            "Status must be 'confirmed' or 'dismissed'."
+        )
+
+    response = requests.patch(
+        f"{API_BASE_URL}/cross-import-duplicates/{duplicate_id}",
+        json={"status": status},
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    response.raise_for_status()
+    return response.json()
 # ============================================================
 # CUSTOM STYLING
 # ============================================================
@@ -252,6 +296,137 @@ def run_financial_analysis(
                 )
 
     return final_result
+
+
+# ============================================================
+# CROSS-IMPORT DUPLICATE REVIEW
+# ============================================================
+
+st.divider()
+st.header("Cross-Import Duplicate Review")
+
+st.write(
+    "Review transactions that may have been imported more than once. "
+    "Confirm or dismiss each candidate without deleting either transaction."
+)
+
+review_filter = st.selectbox(
+    "Filter candidates by status",
+    options=["pending", "confirmed", "dismissed", "all"],
+    format_func=lambda value: value.capitalize(),
+    key="cross_import_review_filter",
+)
+
+if st.button("Refresh duplicate candidates"):
+    st.rerun()
+
+try:
+    duplicate_data = fetch_cross_import_duplicates(
+        status=review_filter
+    )
+    duplicates = duplicate_data.get("duplicates", [])
+
+    st.caption(
+        f"{duplicate_data.get('count', len(duplicates))} candidate(s) found"
+    )
+
+    if not duplicates:
+        st.info("No duplicate candidates found for this status.")
+
+    for duplicate in duplicates:
+        duplicate_id = duplicate["id"]
+        current_status = duplicate.get("status", "pending")
+
+        with st.container(border=True):
+            st.subheader(f"Candidate #{duplicate_id}")
+
+            st.write(
+                f"**Status:** {current_status.capitalize()}"
+            )
+            st.write(f"**Reason:** {duplicate.get('reason', 'Not provided')}")
+
+            new_tx = duplicate["new_transaction"]
+            existing_tx = duplicate["existing_transaction"]
+
+            new_col, existing_col = st.columns(2)
+
+            with new_col:
+                st.markdown("**New transaction**")
+                st.write(f"**Date:** {new_tx.get('transaction_date', '—')}")
+                st.write(f"**Description:** {new_tx.get('description', '—')}")
+                st.write(f"**Amount:** {new_tx.get('amount', '—')}")
+                st.write(f"**Merchant:** {new_tx.get('merchant') or '—'}")
+                st.write(f"**Category:** {new_tx.get('category', '—')}")
+                st.write(f"**Import ID:** {new_tx.get('import_id', '—')}")
+
+            with existing_col:
+                st.markdown("**Existing transaction**")
+                st.write(
+                    f"**Date:** {existing_tx.get('transaction_date', '—')}"
+                )
+                st.write(
+                    f"**Description:** {existing_tx.get('description', '—')}"
+                )
+                st.write(f"**Amount:** {existing_tx.get('amount', '—')}")
+                st.write(
+                    f"**Merchant:** {existing_tx.get('merchant') or '—'}"
+                )
+                st.write(f"**Category:** {existing_tx.get('category', '—')}")
+                st.write(
+                    f"**Import ID:** {existing_tx.get('import_id', '—')}"
+                )
+
+            if current_status == "pending":
+                confirm_col, dismiss_col = st.columns(2)
+
+                with confirm_col:
+                    if st.button(
+                        "Confirm duplicate",
+                        key=f"confirm_duplicate_{duplicate_id}",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        try:
+                            update_cross_import_duplicate(
+                                duplicate_id,
+                                "confirmed",
+                            )
+                            st.success(
+                                f"Candidate #{duplicate_id} confirmed."
+                            )
+                            st.rerun()
+                        except requests.RequestException as exc:
+                            st.error(
+                                f"Could not confirm candidate: {exc}"
+                            )
+
+                with dismiss_col:
+                    if st.button(
+                        "Dismiss candidate",
+                        key=f"dismiss_duplicate_{duplicate_id}",
+                        use_container_width=True,
+                    ):
+                        try:
+                            update_cross_import_duplicate(
+                                duplicate_id,
+                                "dismissed",
+                            )
+                            st.success(
+                                f"Candidate #{duplicate_id} dismissed."
+                            )
+                            st.rerun()
+                        except requests.RequestException as exc:
+                            st.error(
+                                f"Could not dismiss candidate: {exc}"
+                            )
+
+except requests.RequestException as exc:
+    st.error(
+        "Could not connect to the FinanceAI API. "
+        "Check that the FastAPI server is running at "
+        f"{API_BASE_URL}. Details: {exc}"
+    )
+
 
 
 # ============================================================
@@ -825,4 +1000,4 @@ if result:
             "The analysis passed both the human "
             "approval stage and the final critic review."
         )
-        
+
