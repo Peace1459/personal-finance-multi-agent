@@ -163,56 +163,100 @@ with st.sidebar:
         "to provide your financial information."
     )
 
+
     uploaded_file = st.file_uploader(
         "Upload transactions",
         type=["csv"],
     )
 
     if uploaded_file is not None:
+        if st.button("Import CSV", use_container_width=True):
 
-        try:
+            try:
+                file_bytes = uploaded_file.getvalue()
 
-            df = pd.read_csv(uploaded_file)
+                # Validate the CSV locally for the existing agent workflow.
+                df = pd.read_csv(uploaded_file)
 
-            required_columns = {
-                "date",
-                "description",
-                "amount",
-            }
+                required_columns = {
+                    "date",
+                    "description",
+                    "amount",
+                }
 
-            if not required_columns.issubset(
-                df.columns
-            ):
-
-                st.error(
-                    "CSV must contain: "
-                    "date, description, amount"
-                )
-
-            else:
-
-                st.session_state.transactions = (
-                    df.to_dict("records")
-                )
-
-                st.success(
-                    f"{len(df)} transactions loaded."
-                )
-
-                with st.expander(
-                    "Preview transactions"
-                ):
-
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
+                if not required_columns.issubset(df.columns):
+                    st.error(
+                        "CSV must contain: date, description, amount"
                     )
 
-        except Exception as e:
+                else:
+                    # Send the original CSV to the persistent import API.
+                    response = requests.post(
+                        f"{API_BASE_URL}/transactions/import",
+                        files={
+                            "file": (
+                                uploaded_file.name,
+                                file_bytes,
+                                "text/csv",
+                            )
+                        },
+                        timeout=API_TIMEOUT_SECONDS,
+                    )
 
-            st.error(
-                f"Could not read the CSV file: {e}"
-            )
+                    response.raise_for_status()
+                    import_data = response.json()
+
+                    # Preserve the existing finance-agent workflow.
+                    st.session_state.transactions = df.to_dict(
+                        orient="records"
+                    )
+
+                    st.session_state.import_id = import_data["import_id"]
+
+                    st.success("CSV imported and saved successfully.")
+
+                    st.write(
+                        f"**Import ID:** {import_data['import_id']}"
+                    )
+                    st.write(
+                        f"**Transactions imported:** "
+                        f"{import_data['imported_rows']}"
+                    )
+                    st.write(
+                        f"**Import issues:** "
+                        f"{import_data['issue_count']}"
+                    )
+                    st.write(
+                        f"**Within-file duplicate groups:** "
+                        f"{import_data['duplicate_group_count']}"
+                    )
+
+                    with st.expander("Preview transactions"):
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                        )
+
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 409:
+                    try:
+                        detail = exc.response.json().get(
+                            "detail",
+                            "This CSV has already been imported.",
+                        )
+                    except ValueError:
+                        detail = "This CSV has already been imported."
+
+                    st.warning(detail)
+                else:
+                    st.error(f"Import failed: {exc}")
+
+            except requests.RequestException as exc:
+                st.error(f"Could not connect to the FinanceAI API: {exc}")
+
+            except Exception as exc:
+                st.error(f"Could not process the CSV file: {exc}")
+
 
     st.divider()
 
