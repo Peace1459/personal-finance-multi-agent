@@ -6,6 +6,7 @@ from backend.database.service import (
     get_financial_summary,
     get_review_summary,
     get_import_by_file_hash,
+    get_import_batches,
     get_cross_import_duplicates,
     update_cross_import_duplicate_status,
 )
@@ -347,6 +348,39 @@ async def review_summary(
         category_review_count=len(category_row_ids),
         total_rows_requiring_review=len(all_review_row_ids),
     )
+
+@app.get("/imports")
+def list_imports() -> dict:
+    """Retrieve saved CSV import history."""
+
+    db = SessionLocal()
+
+    try:
+        batches = get_import_batches(db)
+
+        return {
+            "count": len(batches),
+            "imports": [
+                {
+                    "id": batch.id,
+                    "created_at": batch.created_at.isoformat(),
+                    "total_rows": batch.total_rows,
+                    "imported_rows": batch.imported_rows,
+                    "issue_count": batch.issue_count,
+                    "affected_row_count": batch.affected_row_count,
+                    "duplicate_group_count": batch.duplicate_group_count,
+                    "duplicate_row_count": batch.duplicate_row_count,
+                    "category_review_count": batch.category_review_count,
+                    "total_rows_requiring_review": (
+                        batch.total_rows_requiring_review
+                    ),
+                }
+                for batch in batches
+            ],
+        }
+
+    finally:
+        db.close()
 
 
 

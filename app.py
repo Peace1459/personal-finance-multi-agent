@@ -64,6 +64,17 @@ def update_cross_import_duplicate(duplicate_id, status):
 
     response.raise_for_status()
     return response.json()
+
+def fetch_import_history():
+    """Fetch saved CSV import history from the API."""
+
+    response = requests.get(
+        f"{API_BASE_URL}/imports",
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    response.raise_for_status()
+    return response.json()
 # ============================================================
 # CUSTOM STYLING
 # ============================================================
@@ -340,6 +351,51 @@ def run_financial_analysis(
                 )
 
     return final_result
+
+# ============================================================
+# IMPORT HISTORY
+# ============================================================
+
+st.divider()
+st.header("Import History")
+
+if st.button("Refresh import history"):
+    st.rerun()
+
+try:
+    history_data = fetch_import_history()
+    imports = history_data.get("imports", [])
+
+    if imports:
+        history_df = pd.DataFrame(imports)
+
+        history_df = history_df.rename(
+            columns={
+                "id": "Import ID",
+                "created_at": "Import Date",
+                "total_rows": "Total Rows",
+                "imported_rows": "Imported Rows",
+                "issue_count": "Issues",
+                "duplicate_group_count": "Duplicate Groups",
+                "duplicate_row_count": "Duplicate Rows",
+                "category_review_count": "Category Reviews",
+                "total_rows_requiring_review": "Rows Requiring Review",
+            }
+        )
+
+        st.caption(f"Total imports: {len(imports)}")
+
+        st.dataframe(
+            history_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.info("No CSV imports have been saved yet.")
+
+except requests.RequestException as exc:
+    st.error(f"Could not load import history: {exc}")
 
 
 # ============================================================

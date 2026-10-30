@@ -24,6 +24,14 @@ def get_import_by_file_hash(session: Session, file_hash: str):
     )
     return session.execute(statement).scalar_one_or_none()
 
+def get_import_batches(session: Session):
+    """Return all import batches, newest first."""
+
+    statement = select(ImportBatch).order_by(
+        ImportBatch.created_at.desc()
+    )
+    return session.execute(statement).scalars().all()
+
 
 def save_import_result(
     session: Session,
