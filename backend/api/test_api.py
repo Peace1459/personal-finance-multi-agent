@@ -5,10 +5,12 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.api.schemas import TransactionUpdateRequest
 from backend.api import main as api_main
 from backend.database.connection import Base
 from backend.database.models import (
@@ -49,6 +51,40 @@ class TestFinanceAIAPI(unittest.TestCase):
 
         self.client = TestClient(api_main.app)
         self.addCleanup(self.client.close)
+
+    def create_test_transaction(self):
+        csv_content = (
+            "date,description,amount\n"
+            "2026-10-01,Test Transaction,-1500\n"
+        )
+
+        response = self.client.post(
+            "/transactions/import",
+            files={
+                "file": (
+                    "test_transaction.csv",
+                    csv_content.encode("utf-8"),
+                    "text/csv",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        import_id = response.json()["import_id"]
+
+        transactions_response = self.client.get(
+           "/transactions",
+           params={"import_id": import_id},
+        )
+
+        self.assertEqual(
+           transactions_response.status_code,
+           200,
+           transactions_response.text,
+        )
+
+        return transactions_response.json()["transactions"][0]
 
     def test_health_endpoint(self):
         response = self.client.get("/health")
@@ -645,10 +681,6 @@ class TestFinanceAIAPI(unittest.TestCase):
         finally:
             db.close()
 
-
-
-
-
     def test_cross_import_duplicates_endpoint_filters_by_status(self):
         first_csv = (
             "date,description,amount\n"
@@ -697,6 +729,126 @@ class TestFinanceAIAPI(unittest.TestCase):
             response.json(),
             {"count": 0, "duplicates": []},
         )
+
+    def test_update_transaction_success(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={
+                "description": "Updated Test Transaction",
+                "amount": -2500,
+                "category": "Transport",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+        updated = response.json()["transaction"]
+
+        self.assertEqual(
+           updated["description"],
+           "Updated Test Transaction",
+        )
+        self.assertEqual(updated["amount"], -2500)
+        self.assertEqual(updated["category"], "Transport")
+
+    def test_update_nonexistent_transaction(self):
+        response = self.client.patch(
+            "/transactions/999999",
+            json={"description": "Updated Description"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json()["detail"],
+            "Transaction not found.",
+        )
+
+    def test_update_transaction_invalid_amount(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={"amount": 0},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_update_income_with_negative_amount(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={
+                "amount": -2500,
+                "transaction_type": "income",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_update_expense_with_positive_amount(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={
+                "amount": 2500,
+                "transaction_type": "expense",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_update_transaction_with_null_description(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={"description": None},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_update_transaction_with_null_amount(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={"amount": None},
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_update_transaction_with_non_finite_amount(self):
+
+        with self.assertRaises(ValidationError):
+            TransactionUpdateRequest.model_validate(
+                {"amount": float("inf")}
+            )
+
+        with self.assertRaises(ValidationError):
+            TransactionUpdateRequest.model_validate(
+                {"amount": float("nan")}
+            )
+
+    def test_update_transaction_empty_payload(self):
+        transaction = self.create_test_transaction()
+        transaction_id = transaction["id"]
+
+        response = self.client.patch(
+            f"/transactions/{transaction_id}",
+            json={},
+        )
+
+        self.assertEqual(response.status_code, 422)
 
 if __name__ == "__main__":
     unittest.main()

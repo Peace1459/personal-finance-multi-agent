@@ -1,57 +1,51 @@
-
 import hashlib
-from backend.database.service import (
-    get_transactions,
-    save_import_result,
-    get_financial_summary,
-    get_review_summary,
-    get_import_by_file_hash,
-    get_import_batches,
-    get_transaction_categories,
-    get_cross_import_duplicates,
-    update_cross_import_duplicate_status,
-)
-from backend.database.service import (
-    get_transactions,
-    save_import_result,
-)
-from fastapi import status
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 from datetime import date
-from fastapi import Query
-from backend.database.connection import SessionLocal
-from backend.database.service import save_transactions
 from io import BytesIO
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from backend.api.schemas import (
-    FinancialSummaryResponse,
-    ReviewSummaryResponse,
-    CrossImportDuplicatesResponse,
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
 )
-from backend.api.summary_service import calculate_financial_summary
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from backend.api.schemas import (
+    CrossImportDuplicateReviewRequest,
+    CrossImportDuplicatesResponse,
+    CrossImportDuplicateStatusResponse,
     DuplicateGroupResponse,
+    FinancialSummaryResponse,
     ImportIssueResponse,
     ImportResponse,
-    CrossImportDuplicateReviewRequest,
-    CrossImportDuplicateStatusResponse,
-    CrossImportDuplicatesResponse,
+    ReviewSummaryResponse,
+    TransactionUpdateRequest,
+)
+from backend.api.summary_service import calculate_financial_summary
+from backend.database.connection import SessionLocal
+from backend.database.models import Transaction
+from backend.database.service import (
+    get_financial_summary,
+    get_import_batches,
+    get_import_by_file_hash,
+    get_review_summary,
+    get_transaction_categories,
+    get_transactions,
+    get_cross_import_duplicates,
+    save_import_result,
+    save_transactions,
+    update_cross_import_duplicate_status,
+    update_transaction,
 )
 from backend.ingestion.column_detector import detect_columns
 from backend.ingestion.normalizer import normalize_transactions
-from backend.api.schemas import (
-    DuplicateGroupResponse,
-    FinancialSummaryResponse,
-    ImportIssueResponse,
-    ImportResponse,
-    ReviewSummaryResponse,
-)
-from backend.api.summary_service import calculate_financial_summary
-from fastapi.responses import JSONResponse
 
 app = FastAPI(
     title="FinanceAI API",
@@ -59,6 +53,28 @@ app = FastAPI(
     version="0.1.0",
 )
 MAX_CSV_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 MB
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    errors = []
+
+    for error in exc.errors():
+        safe_error = error.copy()
+
+        # Remove raw input values because they may contain NaN or Infinity,
+        # which are not valid JSON values.
+        safe_error.pop("input", None)
+        safe_error.pop("ctx", None)
+
+        errors.append(safe_error)
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors},
+    )
 
 @app.middleware("http")
 async def limit_upload_size(request, call_next):
@@ -441,6 +457,105 @@ def list_transactions(
     finally:
         db.close()
 
+@app.patch("/transactions/{transaction_id}")
+def edit_transaction(
+    transaction_id: int,
+    payload: TransactionUpdateRequest,
+) -> dict:
+    """Update an existing transaction."""
+
+    db = SessionLocal()
+
+    try:
+        existing_transaction = db.get(Transaction, transaction_id)
+
+        if existing_transaction is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Transaction not found.",
+            )
+        updates = payload.model_dump(exclude_unset=True)
+
+        # Required transaction fields cannot be set to null.
+        required_fields = {
+            "transaction_date",
+            "description",
+            "amount",
+            "transaction_type",
+            "category",
+        }
+
+        for field in required_fields:
+            if field in updates and updates[field] is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{field} cannot be null.",
+                )
+        final_amount = updates.get("amount", existing_transaction.amount)
+
+        final_type = updates.get(
+            "transaction_type",
+            existing_transaction.transaction_type,
+        )
+
+        if final_amount == 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Transaction amount cannot be zero.",
+            )
+
+        if final_type == "income" and final_amount < 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Income transactions must have a positive amount.",
+            )
+
+        if final_type == "expense" and final_amount > 0:
+            raise HTTPException(
+                status_code=422,
+                detail="Expense transactions must have a negative amount.",
+            )
+
+        if "description" in updates:
+            updates["description"] = updates["description"].strip()
+
+        if "category" in updates:
+            updates["category"] = updates["category"].strip()
+
+        if "merchant" in updates and updates["merchant"] is not None:
+            updates["merchant"] = updates["merchant"].strip() or None
+
+        transaction = update_transaction(
+            db,
+            transaction_id,
+            updates,
+        )
+
+        if transaction is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Transaction not found.",
+            )
+
+        return {
+            "message": "Transaction updated successfully.",
+            "transaction": {
+                "id": transaction.id,
+                "import_id": transaction.import_id,
+                "source_row_id": transaction.source_row_id,
+                "transaction_date": transaction.transaction_date.isoformat(),
+                "description": transaction.description,
+                "amount": transaction.amount,
+                "transaction_type": transaction.transaction_type,
+                "merchant": transaction.merchant,
+                "category": transaction.category,
+                "needs_review": transaction.needs_review,
+            },
+        }
+
+    finally:
+        db.close()
+
 
 @app.get("/transaction-categories")
 def list_transaction_categories() -> dict:
@@ -458,11 +573,6 @@ def list_transaction_categories() -> dict:
 
     finally:
         db.close()
-
-
-
-
-
 
 @app.get("/summary", response_model=FinancialSummaryResponse)
 def saved_financial_summary(

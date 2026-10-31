@@ -1,6 +1,5 @@
 
 from uuid import uuid4
-
 import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -438,3 +437,33 @@ def update_cross_import_duplicate_status(
         session.rollback()
         raise
    return duplicate
+
+def update_transaction(session: Session, transaction_id: int, updates: dict):
+    """Update an existing transaction."""
+
+    transaction = session.get(Transaction, transaction_id)
+
+    if transaction is None:
+        return None
+
+    allowed_fields = {
+        "transaction_date",
+        "description",
+        "amount",
+        "transaction_type",
+        "merchant",
+        "category",
+    }
+
+    for field, value in updates.items():
+        if field in allowed_fields:
+            setattr(transaction, field, value)
+
+    try:
+        session.commit()
+        session.refresh(transaction)
+        return transaction
+
+    except Exception:
+        session.rollback()
+        raise

@@ -125,6 +125,19 @@ def fetch_import_transactions(
     response.raise_for_status()
     return response.json()
 
+def update_transaction(transaction_id: int, updates: dict):
+    """Update a transaction through the FastAPI backend."""
+
+    response = requests.patch(
+        f"{API_BASE_URL}/transactions/{transaction_id}",
+        json=updates,
+        timeout=30,
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
 # ============================================================
 # CUSTOM STYLING
 # ============================================================
@@ -200,6 +213,9 @@ if "messages" not in st.session_state:
 
 if "transactions" not in st.session_state:
     st.session_state.transactions = None
+
+if "filtered_transactions" not in st.session_state:
+    st.session_state.filtered_transactions = []
 
 if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = None
@@ -430,9 +446,9 @@ with st.form("transaction_filter_form"):
             category_options = ["All"] + available_categories
 
             category_filter = st.selectbox(
-                 "Category",
+                "Category",
                 options=category_options,
-    )
+            )
 
         except requests.RequestException as exc:
             st.error(f"Could not load transaction categories: {exc}")
@@ -445,7 +461,7 @@ with st.form("transaction_filter_form"):
     with col2:
         transaction_type_filter = st.selectbox(
             "Transaction type",
-            options=["All", "Income", "Expense"],
+            options=["All", "income", "expense"],
         )
 
         end_date_filter = st.date_input(
@@ -458,7 +474,7 @@ with st.form("transaction_filter_form"):
         use_container_width=True,
     )
 
-if submitted:
+if submitted or st.session_state.filtered_transactions:
 
     if (
         start_date_filter is not None
@@ -493,7 +509,11 @@ if submitted:
                 ),
             )
 
-            transactions = result.get("transactions", [])
+            st.session_state.filtered_transactions = result.get(
+                "transactions",
+                [],
+            )
+            transactions = st.session_state.filtered_transactions
 
             st.write(
                 f"Matching transactions: {result.get('count', 0)}"
@@ -507,6 +527,129 @@ if submitted:
                     use_container_width=True,
                     hide_index=True,
                 )
+                st.subheader("Edit a Transaction")
+
+                transaction_options = {
+                    f"{item['id']} — {item['description']}": item
+                    for item in transactions
+                }
+                selected_transaction_label = st.selectbox(
+                    "Select a transaction",
+                    options=list(transaction_options.keys()),
+                )
+                selected_transaction = transaction_options[
+                    selected_transaction_label
+                ]
+
+                with st.form("edit_transaction_form"):
+
+                    edit_date = st.date_input(
+                        "Transaction date",
+                        value=pd.to_datetime(
+                            selected_transaction["transaction_date"]
+                        ).date(),
+                    )
+
+                    edit_description = st.text_input(
+                        "Description",
+                        value=selected_transaction["description"],
+                    )
+                    edit_type = st.selectbox(
+                        "Transaction type",
+                        options=["income", "expense"],
+                        index=(
+                            0
+                            if selected_transaction["transaction_type"] == "income"
+                            else 1
+                        ),
+                    )
+
+                    current_amount = abs(float(selected_transaction["amount"]))
+
+                    edit_amount = st.number_input(
+                        "Amount",
+                        min_value=0.01,
+                        value=max(current_amount, 0.01),
+                        format="%.2f",
+                        help="Enter the amount as a positive number. The transaction type determines its sign.",
+                    )
+
+                    edit_merchant = st.text_input(
+                        "Merchant",
+                        value=selected_transaction.get("merchant") or "",
+                    )
+
+                    edit_category = st.text_input(
+                        "Category",
+                        value=selected_transaction["category"],
+                    )
+
+                    save_changes = st.form_submit_button(
+                        "Save Changes",
+                        use_container_width=True,
+                    )
+                if save_changes:
+
+                    if not edit_description.strip():
+                        st.error("Description cannot be empty.")
+
+                    elif not edit_category.strip():
+                        st.error("Category cannot be empty.")
+
+                    else:
+
+                        updates = {
+                            "transaction_date": edit_date.isoformat(),
+                            "description": edit_description.strip(),
+                            "amount": (
+                                abs(edit_amount)
+                                if edit_type == "income"
+                                else -abs(edit_amount)
+                            ),
+                            "transaction_type": edit_type,
+                            "merchant": edit_merchant.strip() or None,
+                            "category": edit_category.strip(),
+                        }
+                        try:
+                            update_transaction(
+                                selected_transaction["id"],
+                                updates,
+                            )
+
+                            refreshed_result = fetch_import_transactions(
+                                search=search_term,
+                                category=(
+                                None
+                                if category_filter == "All"
+                                else category_filter
+                                ),
+                                transaction_type=(
+                                    None
+                                    if transaction_type_filter == "All"
+                                    else transaction_type_filter
+                                ),
+                                start_date=(
+                                    start_date_filter.isoformat()
+                                    if start_date_filter is not None
+                                    else None
+                                ),
+                                end_date=(
+                                    end_date_filter.isoformat()
+                                    if end_date_filter is not None
+                                    else None
+                                ),
+                            )
+                            st.session_state.filtered_transactions = refreshed_result.get(
+                                "transactions",
+                                [],
+                            )
+
+                            st.success("Transaction updated successfully.")
+                        except requests.HTTPError as exc:
+                            st.error(f"Could not update transaction: {exc.response.text}")
+                        except requests.RequestException as exc:
+                            st.error(f"Could not connect to the API: {exc}")
+
             else:
                 st.info("No transactions match your filters.")
 
