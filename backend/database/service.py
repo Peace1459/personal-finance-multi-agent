@@ -5,6 +5,9 @@ import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.orm import aliased
+from datetime import date
+from sqlalchemy import or_
+from sqlalchemy import func
 from backend.database.models import (
     CrossImportDuplicate,
     DuplicateGroupRecord,
@@ -226,19 +229,75 @@ def save_transactions(
     return import_id, len(records)
 
 
+
 def get_transactions(
     session: Session,
     import_id: str | None = None,
+    search: str | None = None,
+    category: str | None = None,
+    transaction_type: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> list[Transaction]:
+    """Retrieve transactions using optional search and filters."""
+
     query = session.query(Transaction)
 
     if import_id is not None:
         query = query.filter(Transaction.import_id == import_id)
 
+    if search:
+        search_term = f"%{search.strip()}%"
+
+        query = query.filter(
+            or_(
+                Transaction.description.ilike(search_term),
+                Transaction.merchant.ilike(search_term),
+            )
+        )
+
+    if category is not None:
+        query = query.filter(
+           func.lower(Transaction.category)
+           == category.strip().lower()
+    )
+
+    if transaction_type is not None:
+        query = query.filter(
+           func.lower(Transaction.transaction_type)
+           == transaction_type.strip().lower()
+    )
+
+    if start_date is not None:
+        query = query.filter(
+            Transaction.transaction_date >= start_date
+        )
+
+    if end_date is not None:
+        query = query.filter(
+            Transaction.transaction_date <= end_date
+        )
+
     return query.order_by(
         Transaction.transaction_date.desc(),
         Transaction.id.desc(),
     ).all()
+
+
+def get_transaction_categories(session: Session) -> list[str]:
+    """Return distinct transaction categories."""
+
+    categories = (
+        session.query(Transaction.category)
+        .filter(Transaction.category.isnot(None))
+        .distinct()
+        .order_by(Transaction.category.asc())
+        .all()
+    )
+
+    return [category[0] for category in categories]
+
+
 
 
 def get_financial_summary(

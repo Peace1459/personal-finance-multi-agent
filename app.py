@@ -76,17 +76,55 @@ def fetch_import_history():
     response.raise_for_status()
     return response.json()
 
-def fetch_import_transactions(import_id):
-    """Fetch transactions belonging to a specific import."""
+
+def fetch_transaction_categories():
+    """Fetch available transaction categories from the API."""
+
+    response = requests.get(
+        f"{API_BASE_URL}/transaction-categories",
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    response.raise_for_status()
+    return response.json().get("categories", [])
+
+
+
+def fetch_import_transactions(
+    import_id=None,
+    search=None,
+    category=None,
+    transaction_type=None,
+    start_date=None,
+    end_date=None,
+):
+    """Fetch transactions using optional filters."""
+
+    params = {
+        "import_id": import_id,
+        "search": search,
+        "category": category,
+        "transaction_type": transaction_type,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+    # Remove parameters that were not provided.
+    params = {
+        key: value
+        for key, value in params.items()
+        if value is not None and value != ""
+    }
 
     response = requests.get(
         f"{API_BASE_URL}/transactions",
-        params={"import_id": import_id},
+        params=params,
         timeout=API_TIMEOUT_SECONDS,
     )
 
     response.raise_for_status()
     return response.json()
+
 # ============================================================
 # CUSTOM STYLING
 # ============================================================
@@ -363,6 +401,118 @@ def run_financial_analysis(
                 )
 
     return final_result
+
+
+# ============================================================
+# TRANSACTION MANAGEMENT
+# ============================================================
+
+st.divider()
+st.header("Transaction Management")
+
+st.write(
+    "Search and filter transactions saved across all imports."
+)
+
+with st.form("transaction_filter_form"):
+
+    search_term = st.text_input(
+        "Search description or merchant",
+        placeholder="e.g. Naivas, Uber, Rent",
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        try:
+            available_categories = fetch_transaction_categories()
+
+            category_options = ["All"] + available_categories
+
+            category_filter = st.selectbox(
+                 "Category",
+                options=category_options,
+    )
+
+        except requests.RequestException as exc:
+            st.error(f"Could not load transaction categories: {exc}")
+            category_filter = "All"
+        start_date_filter = st.date_input(
+            "Start date",
+            value=None,
+        )
+
+    with col2:
+        transaction_type_filter = st.selectbox(
+            "Transaction type",
+            options=["All", "Income", "Expense"],
+        )
+
+        end_date_filter = st.date_input(
+            "End date",
+            value=None,
+        )
+
+    submitted = st.form_submit_button(
+        "Search Transactions",
+        use_container_width=True,
+    )
+
+if submitted:
+
+    if (
+        start_date_filter is not None
+        and end_date_filter is not None
+        and start_date_filter > end_date_filter
+    ):
+        st.error("Start date cannot be after end date.")
+
+    else:
+        try:
+            result = fetch_import_transactions(
+                search=search_term,
+                category=(
+                    None
+                    if category_filter == "All"
+                    else category_filter
+                ),
+                transaction_type=(
+                    None
+                    if transaction_type_filter == "All"
+                    else transaction_type_filter
+                ),
+                start_date=(
+                    start_date_filter.isoformat()
+                    if start_date_filter is not None
+                    else None
+                ),
+                end_date=(
+                    end_date_filter.isoformat()
+                    if end_date_filter is not None
+                    else None
+                ),
+            )
+
+            transactions = result.get("transactions", [])
+
+            st.write(
+                f"Matching transactions: {result.get('count', 0)}"
+            )
+
+            if transactions:
+                transactions_df = pd.DataFrame(transactions)
+
+                st.dataframe(
+                    transactions_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No transactions match your filters.")
+
+        except requests.RequestException as exc:
+            st.error(f"Could not retrieve transactions: {exc}")
+
 
 # ============================================================
 # IMPORT HISTORY

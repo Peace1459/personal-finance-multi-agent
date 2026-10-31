@@ -7,6 +7,7 @@ from backend.database.service import (
     get_review_summary,
     get_import_by_file_hash,
     get_import_batches,
+    get_transaction_categories,
     get_cross_import_duplicates,
     update_cross_import_duplicate_status,
 )
@@ -17,6 +18,7 @@ from backend.database.service import (
 from fastapi import status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from datetime import date
 from fastapi import Query
 from backend.database.connection import SessionLocal
 from backend.database.service import save_transactions
@@ -384,16 +386,36 @@ def list_imports() -> dict:
 
 
 
+
 @app.get("/transactions")
 def list_transactions(
     import_id: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    transaction_type: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
 ) -> dict:
-    """Retrieve saved transactions from the database."""
+    """Retrieve saved transactions using optional filters."""
 
     db = SessionLocal()
 
     try:
-        transactions = get_transactions(db, import_id)
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date cannot be after end_date.",
+            )
+
+        transactions = get_transactions(
+            db,
+            import_id=import_id,
+            search=search,
+            category=category,
+            transaction_type=transaction_type,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         return {
             "count": len(transactions),
@@ -418,6 +440,28 @@ def list_transactions(
 
     finally:
         db.close()
+
+
+@app.get("/transaction-categories")
+def list_transaction_categories() -> dict:
+    """Retrieve distinct transaction categories."""
+
+    db = SessionLocal()
+
+    try:
+        categories = get_transaction_categories(db)
+
+        return {
+            "count": len(categories),
+            "categories": categories,
+        }
+
+    finally:
+        db.close()
+
+
+
+
 
 
 @app.get("/summary", response_model=FinancialSummaryResponse)
