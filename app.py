@@ -75,6 +75,18 @@ def fetch_import_history():
 
     response.raise_for_status()
     return response.json()
+
+def fetch_import_transactions(import_id):
+    """Fetch transactions belonging to a specific import."""
+
+    response = requests.get(
+        f"{API_BASE_URL}/transactions",
+        params={"import_id": import_id},
+        timeout=API_TIMEOUT_SECONDS,
+    )
+
+    response.raise_for_status()
+    return response.json()
 # ============================================================
 # CUSTOM STYLING
 # ============================================================
@@ -391,12 +403,75 @@ try:
             hide_index=True,
         )
 
+        # ----------------------------------------------------
+        # IMPORT DETAILS
+        # ----------------------------------------------------
+
+        st.subheader("View Import Details")
+
+        import_options = {
+            (
+                f"{batch['created_at'][:10]} | "
+                f"{batch['imported_rows']} transactions | "
+                f"{batch['id'][:8]}"
+            ): batch["id"]
+            for batch in imports
+        }
+
+        selected_import_label = st.selectbox(
+            "Select an import",
+            options=list(import_options.keys()),
+            key="selected_import_history",
+        )
+
+        selected_import_id = import_options[
+            selected_import_label
+        ]
+
+        if st.button(
+            "View Transactions",
+            use_container_width=True,
+        ):
+            try:
+                detail_data = fetch_import_transactions(
+                    selected_import_id
+                )
+
+                transactions = detail_data.get(
+                    "transactions", []
+                )
+
+                if transactions:
+                    st.write(
+                        f"Transactions found: "
+                        f"{detail_data['count']}"
+                    )
+
+                    transactions_df = pd.DataFrame(
+                        transactions
+                    )
+
+                    st.dataframe(
+                        transactions_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                else:
+                    st.info(
+                        "No transactions found for this import."
+                    )
+
+            except requests.RequestException as exc:
+                st.error(
+                    f"Could not retrieve import details: {exc}"
+                )
+
     else:
         st.info("No CSV imports have been saved yet.")
 
 except requests.RequestException as exc:
     st.error(f"Could not load import history: {exc}")
-
 
 # ============================================================
 # CROSS-IMPORT DUPLICATE REVIEW
